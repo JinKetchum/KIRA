@@ -1,0 +1,8 @@
+.env
+kira_env/
+__pycache__/
+*.pyc
+temp_speech.mp3
+screenshot.png
+kira_memory.json
+kira_calendar.json

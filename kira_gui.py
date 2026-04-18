@@ -1,0 +1,665 @@
+import customtkinter as ctk
+import threading
+import os
+import datetime
+import webbrowser
+import subprocess
+import speech_recognition as sr
+from groq import Groq
+from dotenv import load_dotenv
+import requests
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import pyautogui
+import asyncio
+import edge_tts
+
+async def _async_speak(text):
+    communicate = edge_tts.Communicate(text, voice="en-US-AriaNeural")
+    await communicate.save("temp_speech.mp3")
+
+# Load env
+load_dotenv()
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+import json
+
+MEMORY_FILE = os.path.join(os.path.expanduser("~"), "Documents", "kira_memory.json")
+
+def load_memory():
+    if os.path.exists(MEMORY_FILE):
+        with open(MEMORY_FILE, "r") as f:
+            return json.load(f)
+    return [{"role": "system", "content": "You are KIRA (Kinetic Intelligence & Response Assistant), a helpful, smart and friendly AI assistant. Keep responses concise and clear."}]
+
+def save_memory(history):
+    with open(MEMORY_FILE, "w") as f:
+        json.dump(history, f, indent=2)
+
+conversation_history = load_memory()
+
+# ── GUI Setup ──────────────────────────────────────────────
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
+
+app = ctk.CTk()
+app.configure(fg_color="#2b2b2b")
+app.title("KIRA — Kinetic Intelligence & Response Assistant")
+app.geometry("800x600")
+app.resizable(False, False)
+
+# Header
+header = ctk.CTkLabel(
+    app,
+    text="◈ KIRA SYSTEM ONLINE ◈",
+    font=ctk.CTkFont(family="Courier", size=20, weight="bold"),
+    text_color="#00ffff"
+)
+header.pack(pady=(20, 5))
+
+subtitle = ctk.CTkLabel(
+    app,
+    text="Kinetic Intelligence & Response Assistant",
+    font=ctk.CTkFont(family="Courier", size=11),
+    text_color="#005f5f"
+)
+subtitle.pack(pady=(0, 10))
+
+# Terminal output box
+terminal = ctk.CTkTextbox(
+    app,
+    width=860,
+    height=280,
+    font=ctk.CTkFont(family="Courier", size=13),
+    fg_color="#0a0a0a",
+    text_color="#00ff99",
+    border_color="#00ffff",
+    border_width=1,
+    wrap="word"
+)
+terminal.pack(padx=20, pady=(0, 10))
+terminal.configure(state="disabled")
+
+# Input area
+input_frame = ctk.CTkFrame(app, fg_color="transparent")
+input_frame.pack(padx=20, fill="x")
+
+input_box = ctk.CTkEntry(
+    input_frame,
+    placeholder_text="Enter command...",
+    font=ctk.CTkFont(family="Courier", size=13),
+    fg_color="#0a0a0a",
+    border_color="#00ffff",
+    text_color="#00ff99",
+    height=40
+)
+input_box.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+send_btn = ctk.CTkButton(
+    input_frame,
+    text="EXECUTE",
+    font=ctk.CTkFont(family="Courier", size=12, weight="bold"),
+    fg_color="#003333",
+    hover_color="#005555",
+    border_color="#00ffff",
+    border_width=1,
+    text_color="#00ffff",
+    width=100,
+    height=40
+)
+send_btn.pack(side="right")
+
+# Status bar
+status = ctk.CTkLabel(
+    app,
+    text="● SYSTEM READY",
+    font=ctk.CTkFont(family="Courier", size=10),
+    text_color="#00ff99"
+)
+status.pack(pady=(5, 0))
+
+# ── Core Functions ─────────────────────────────────────────
+def log(text, color="#00ff99"):
+    terminal.configure(state="normal")
+    terminal.insert("end", text + "\n")
+    terminal.see("end")
+    terminal.configure(state="disabled")
+
+def listen():
+    status.configure(text="● LISTENING...", text_color="#ffff00")
+    r = sr.Recognizer()
+    try:
+        with sr.Microphone() as source:
+            r.pause_threshold = 1
+            audio = r.listen(source)
+        query = r.recognize_google(audio, language="en-in").lower()
+        log(f"YOU ▶ {query}", "#ffffff")
+        status.configure(text="● SYSTEM READY", text_color="#00ff99")
+        return query
+    except:
+        speak("Sorry, I didn't catch that.")
+        status.configure(text="● SYSTEM READY", text_color="#00ff99")
+        return None
+    
+def speak(text):
+    log(f"KIRA ▶ {text}", "#00ffff")
+    def _speak():
+        try:
+            set_orb_mode("speaking")
+            asyncio.run(_async_speak(text))
+            import pygame
+            pygame.mixer.init()
+            pygame.mixer.music.load("temp_speech.mp3")
+            pygame.mixer.music.play()
+            while pygame.mixer.music.get_busy():
+                import time
+                time.sleep(0.1)
+            pygame.mixer.quit()
+            set_orb_mode("idle")
+        except Exception as e:
+            print(f"TTS error: {e}")
+    threading.Thread(target=_speak, daemon=True).start()
+
+def ask_kira(prompt):
+    conversation_history.append({"role": "user", "content": prompt})
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=conversation_history,
+        max_tokens=500
+    )
+    reply = response.choices[0].message.content
+    conversation_history.append({"role": "assistant", "content": reply})
+    save_memory(conversation_history)
+    return reply
+
+def send_email(to, subject, body):
+    try:
+        sender = os.getenv("EMAIL_ADDRESS")
+        password = os.getenv("EMAIL_PASSWORD")
+        msg = MIMEMultipart()
+        msg["From"] = sender
+        msg["To"] = to
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body, "plain"))
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(sender, password)
+        server.sendmail(sender, to, msg.as_string())
+        server.quit()
+        speak(f"Email sent successfully to {to}!")
+    except Exception as e:
+        speak("Sorry, I couldn't send the email.")
+        log(f"Email error: {e}", "#ff0000")
+
+def get_weather(city):
+    try:
+        api_key = os.getenv("WEATHER_API_KEY")
+        url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric"
+        data = requests.get(url).json()
+        if data["cod"] == 200:
+            temp = data["main"]["temp"]
+            feels_like = data["main"]["feels_like"]
+            humidity = data["main"]["humidity"]
+            description = data["weather"][0]["description"]
+            speak(f"Weather in {city}: {description}. Temp: {temp}°C, feels like {feels_like}°C. Humidity: {humidity}%.")
+        else:
+            speak("Sorry, I couldn't find weather for that city.")
+    except Exception as e:
+        speak("Sorry, I couldn't fetch the weather.")
+        log(f"Weather error: {e}", "#ff0000")
+
+def get_news():
+    try:
+        api_key = os.getenv("NEWS_API_KEY")
+        url = f"https://newsapi.org/v2/top-headlines?language=en&apiKey={api_key}&pageSize=5"
+        data = requests.get(url).json()
+        articles = data.get("articles", [])
+        if articles:
+            speak(f"Here are the top {len(articles)} headlines:")
+            for i, article in enumerate(articles, 1):
+                speak(f"Headline {i}: {article['title']}")
+        else:
+            speak("Sorry, couldn't fetch news right now.")
+    except Exception as e:
+        speak("Sorry, I couldn't fetch the news.")
+        log(f"News error: {e}", "#ff0000")
+
+def save_note(note):
+    try:
+        notes_path = os.path.join(os.path.expanduser("~"), "Documents", "KIRA_Notes.txt")
+        with open(notes_path, "a") as f:
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %I:%M %p")
+            f.write(f"[{timestamp}] {note}\n")
+        speak("Note saved successfully!")
+    except Exception as e:
+        speak("Sorry, I couldn't save the note.")
+        log(f"Note error: {e}", "#ff0000")
+
+CALENDAR_FILE = os.path.join(os.path.expanduser("~"), "Documents", "kira_calendar.json")
+
+def load_calendar():
+    if os.path.exists(CALENDAR_FILE):
+        with open(CALENDAR_FILE, "r") as f:
+            return json.load(f)
+    return []
+
+def save_calendar(events):
+    with open(CALENDAR_FILE, "w") as f:
+        json.dump(events, f, indent=2)
+
+def add_event(title, date, time):
+    events = load_calendar()
+    event = {
+        "title": title,
+        "date": date,
+        "time": time
+    }
+    events.append(event)
+    save_calendar(events)
+    speak(f"Event '{title}' added for {date} at {time}!")
+
+def show_today_events():
+    events = load_calendar()
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    today_events = [e for e in events if e["date"] == today]
+    if today_events:
+        speak(f"You have {len(today_events)} event(s) today:")
+        for e in today_events:
+            speak(f"{e['time']} — {e['title']}")
+            log(f"📅 {e['time']} — {e['title']}", "#ffff00")
+    else:
+        speak("You have no events today!")
+
+def show_all_events():
+    events = load_calendar()
+    if events:
+        speak(f"You have {len(events)} total event(s):")
+        for e in events:
+            msg = f"{e['date']} at {e['time']} — {e['title']}"
+            log(f"📅 {msg}", "#ffff00")
+            speak(msg)
+        speak("Your calendar is empty!")
+
+def delete_event(title):
+    events = load_calendar()
+    new_events = [e for e in events if title.lower() not in e["title"].lower()]
+    if len(new_events) < len(events):
+        save_calendar(new_events)
+        speak(f"Event '{title}' deleted!")
+    else:
+        speak(f"No event found with the name '{title}'")
+
+def file_manager(action, path, extra=""):
+    try:
+        if action == "list":
+            items = os.listdir(path)
+            if items:
+                speak(f"Found {len(items)} items in {path}:")
+                for item in items:
+                    log(f"📄 {item}", "#ffff00")
+            else:
+                speak("Folder is empty!")
+
+        elif action == "delete":
+            if os.path.exists(path):
+                os.remove(path)
+                speak(f"Deleted {os.path.basename(path)} successfully!")
+            else:
+                speak("File not found!")
+
+        elif action == "mkdir":
+            os.makedirs(path, exist_ok=True)
+            speak(f"Folder {path} created successfully!")
+
+        elif action == "rename":
+            folder = os.path.dirname(path)
+            new_path = os.path.join(folder, extra)
+            os.rename(path, new_path)
+            speak(f"Renamed to {extra} successfully!")
+
+        elif action == "move":
+            import shutil
+            shutil.move(path, extra)
+            speak(f"Moved successfully!")
+
+    except Exception as e:
+        speak("Sorry, I couldn't complete that file operation.")
+        log(f"File error: {e}", "#ff0000")
+
+def handle_command(query):
+    if not query:
+        return
+    set_orb_mode("processing")
+    status.configure(text="● PROCESSING...", text_color="#ff9900")
+
+    if "open notepad" in query:
+        speak("Opening Notepad")
+        subprocess.Popen("notepad.exe")
+    elif "open calculator" in query:
+        speak("Opening Calculator")
+        subprocess.Popen("calc.exe")
+    elif "open chrome" in query:
+        speak("Opening Chrome")
+        subprocess.Popen("chrome.exe")
+    elif "open vs code" in query or "open vscode" in query:
+        speak("Opening VS Code")
+        subprocess.Popen("code")
+    elif "open file manager" in query or "open explorer" in query:
+        speak("Opening File Explorer")
+        subprocess.Popen("explorer.exe")
+    elif "open task manager" in query:
+        speak("Opening Task Manager")
+        subprocess.Popen("taskmgr.exe")
+    elif "open settings" in query:
+        speak("Opening Settings")
+        subprocess.Popen("ms-settings:", shell=True)
+    elif "volume up" in query:
+        speak("Turning volume up")
+        for _ in range(5):
+            subprocess.call(["nircmd.exe", "changesysvolume", "5000"])
+    elif "volume down" in query:
+        speak("Turning volume down")
+        for _ in range(5):
+            subprocess.call(["nircmd.exe", "changesysvolume", "-5000"])
+    elif "mute" in query:
+        speak("Muting")
+        subprocess.call(["nircmd.exe", "mutesysvolume", "1"])
+    elif "unmute" in query:
+        speak("Unmuting")
+        subprocess.call(["nircmd.exe", "mutesysvolume", "0"])
+    elif "shutdown" in query:
+        speak("Shutting down in 10 seconds!")
+        subprocess.Popen("shutdown /s /t 10", shell=True)
+    elif "restart" in query:
+        speak("Restarting in 10 seconds!")
+        subprocess.Popen("shutdown /r /t 10", shell=True)
+    elif "cancel shutdown" in query:
+        speak("Shutdown cancelled!")
+        subprocess.Popen("shutdown /a", shell=True)
+    elif "lock" in query:
+        speak("Locking the computer")
+        subprocess.call("rundll32.exe user32.dll,LockWorkStation", shell=True)
+    elif "take screenshot" in query:
+        ss_path = os.path.join(os.path.expanduser("~"), "Pictures", "Screenshots", "screenshot.png")
+        pyautogui.screenshot(ss_path)
+        speak("Screenshot saved!")
+    elif "search" in query:
+        term = query.replace("search", "").strip()
+        speak(f"Searching for {term}")
+        webbrowser.open(f"https://www.google.com/search?q={term}")
+    elif "play" in query:
+        song = query.replace("play", "").strip()
+        speak(f"Playing {song} on YouTube")
+        webbrowser.open(f"https://www.youtube.com/results?search_query={song}")
+    elif "time" in query:
+        time = datetime.datetime.now().strftime("%I:%M %p")
+        speak(f"Current time is {time}")
+    elif "date" in query:
+        date = datetime.datetime.now().strftime("%B %d, %Y")
+        speak(f"Today is {date}")
+    elif "save note" in query or "take note" in query:
+        speak("What should I note down?")
+        log("KIRA ▶ Type your note in the input box and press EXECUTE", "#00ffff")
+        app.after(100, lambda: setattr(app, '_note_mode', True))
+    elif "weather" in query:
+        if "in" in query:
+            city = query.split("in")[-1].strip()
+        else:
+            city = "Hyderabad"
+        get_weather(city)
+    elif "news" in query or "headlines" in query:
+        get_news()
+    elif "send email" in query or "send mail" in query:
+        speak("Please type: to|subject|message in the input box")
+        log("KIRA ▶ Format: recipient@email.com|Subject|Message body", "#00ffff")
+    elif "clear memory" in query or "forget everything" in query:
+        conversation_history.clear()
+        conversation_history.append({"role": "system", "content": "You are KIRA (Kinetic Intelligence & Response Assistant), a helpful, smart and friendly AI assistant. Keep responses concise and clear."})
+        save_memory(conversation_history)
+        speak("Memory cleared! Starting fresh.")
+    elif "add event" in query or "add to calendar" in query:
+        speak("What is the event title?")
+        log("KIRA ▶ Type: title|YYYY-MM-DD|HH:MM in the input box", "#00ffff")
+        app.after(100, lambda: setattr(app, '_calendar_mode', True))
+
+    elif "today's events" in query or "what's today" in query:
+        show_today_events()
+
+    elif "show calendar" in query or "all events" in query or "show calender" in query or "show events" in query:
+        show_all_events()
+
+    elif "delete event" in query:
+        title = query.replace("delete event", "").strip()
+        if title:
+            delete_event(title)
+        else:
+            speak("Which event should I delete?")
+            log("KIRA ▶ Type the event name in the input box", "#00ffff")
+            app.after(100, lambda: setattr(app, '_delete_event_mode', True))
+    elif any(word in query for word in ["exit", "quit", "bye", "shutdown kira"]):
+        speak("Goodbye! KIRA going offline!")
+    elif "list files" in query:
+        speak("Which folder? Type the path in the input box.")
+        log("KIRA ▶ Type full folder path e.g. C:\\Users\\Admin\\Documents", "#00ffff")
+        app.after(100, lambda: setattr(app, '_listfiles_mode', True))
+
+    elif "delete file" in query:
+        speak("Type the full file path to delete.")
+        log("KIRA ▶ Type full file path e.g. C:\\Users\\Admin\\test.txt", "#00ffff")
+        app.after(100, lambda: setattr(app, '_deletefile_mode', True))
+
+    elif "create folder" in query:
+        speak("Type the full path for the new folder.")
+        log("KIRA ▶ Type full path e.g. C:\\Users\\Admin\\NewFolder", "#00ffff")
+        app.after(100, lambda: setattr(app, '_mkdir_mode', True))
+
+    elif "rename file" in query:
+        speak("Type: old path|new name")
+        log("KIRA ▶ Format: C:\\path\\oldname.txt|newname.txt", "#00ffff")
+        app.after(100, lambda: setattr(app, '_rename_mode', True))
+
+    elif "move file" in query:
+        speak("Type: source path|destination path")
+        log("KIRA ▶ Format: C:\\source\\file.txt|C:\\destination\\", "#00ffff")
+        app.after(100, lambda: setattr(app, '_move_mode', True))
+        app.after(2000, app.destroy)
+    else:
+        speak("Let me think...")
+        threading.Thread(target=lambda: speak(ask_kira(query)), daemon=True).start()
+
+    set_orb_mode("idle")
+    status.configure(text="● SYSTEM READY", text_color="#00ff99")
+
+def process_input(event=None):
+    query = input_box.get().strip()
+    if not query:
+        return
+    
+    if getattr(app, '_listfiles_mode', False):
+        app._listfiles_mode = False
+        input_box.delete(0, "end")
+        file_manager("list", query)
+        return
+
+    if getattr(app, '_deletefile_mode', False):
+        app._deletefile_mode = False
+        input_box.delete(0, "end")
+        file_manager("delete", query)
+        return
+
+    if getattr(app, '_mkdir_mode', False):
+        app._mkdir_mode = False
+        input_box.delete(0, "end")
+        file_manager("mkdir", query)
+        return
+
+    if getattr(app, '_rename_mode', False):
+        app._rename_mode = False
+        input_box.delete(0, "end")
+        parts = query.split("|")
+        if len(parts) == 2:
+            file_manager("rename", parts[0].strip(), parts[1].strip())
+        return
+
+    if getattr(app, '_move_mode', False):
+        app._move_mode = False
+        input_box.delete(0, "end")
+        parts = query.split("|")
+        if len(parts) == 2:
+            file_manager("move", parts[0].strip(), parts[1].strip())
+        return
+    
+    if getattr(app, '_calendar_mode', False):
+        app._calendar_mode = False
+        log(f"CALENDAR ▶ {query}", "#ffff00")
+        input_box.delete(0, "end")
+        parts = query.split("|")
+        if len(parts) == 3:
+            add_event(parts[0].strip(), parts[1].strip(), parts[2].strip())
+        else:
+            speak("Please use format: title|YYYY-MM-DD|HH:MM")
+        return
+
+    if getattr(app, '_delete_event_mode', False):
+        app._delete_event_mode = False
+        log(f"DELETE ▶ {query}", "#ffff00")
+        input_box.delete(0, "end")
+        delete_event(query)
+        return
+    
+    if getattr(app, '_note_mode', False):
+        app._note_mode = False
+        log(f"NOTE ▶ {query}", "#ffff00")
+        input_box.delete(0, "end")
+        save_note(query)
+        return
+
+    log(f"YOU ▶ {query.lower()}", "#ffffff")
+    input_box.delete(0, "end")
+
+    if "|" in query:
+        parts = query.split("|")
+        if len(parts) == 3:
+            send_email(parts[0].strip(), parts[1].strip(), parts[2].strip())
+        return
+
+    threading.Thread(target=handle_command, args=(query.lower(),), daemon=True).start()
+
+def voice_input():
+    threading.Thread(target=lambda: handle_command(listen()), daemon=True).start()
+
+# Bind buttons
+send_btn.configure(command=process_input)
+input_box.bind("<Return>", process_input)
+
+# Voice button
+voice_btn = ctk.CTkButton(
+    app,
+    text="🎤 VOICE INPUT",
+    font=ctk.CTkFont(family="Courier", size=12, weight="bold"),
+    fg_color="#003333",
+    hover_color="#005555",
+    border_color="#00ffff",
+    border_width=1,
+    text_color="#00ffff",
+    width=200,
+    height=35,
+    command=voice_input
+)
+voice_btn.pack(pady=(5, 0))
+
+# Orb Canvas - Cyan/Blue Plasma style
+orb_canvas = ctk.CTkCanvas(app, width=100, height=100, bg="#2b2b2b", highlightthickness=0)
+orb_canvas.pack(pady=(0, 5))
+
+import math
+
+orb_state = {"mode": "idle", "step": 0, "angle": 0}
+
+def draw_plasma_orb(color_core, color_mid, color_outer, color_ring, angle):
+    orb_canvas.delete("all")
+    orb_canvas.create_rectangle(0, 0, 100, 100, fill="#2b2b2b", outline="")
+    cx, cy, r = 50, 50, 38
+
+    # Outer glow rings
+    for i in range(6, 0, -1):
+        alpha_r = r + i * 1
+        fade = hex(20 + i * 8)[2:].zfill(2)
+        orb_canvas.create_oval(
+            cx - alpha_r, cy - alpha_r,
+            cx + alpha_r, cy + alpha_r,
+            fill="", outline=color_ring, width=1
+        )
+
+    # Base sphere layers
+    for i in range(r, 0, -3):
+        ratio = i / r
+        orb_canvas.create_oval(
+            cx - i, cy - i, cx + i, cy + i,
+            fill=color_outer if ratio > 0.7 else (color_mid if ratio > 0.4 else color_core),
+            outline=""
+        )
+
+    # Animated energy arcs
+    for i in range(6):
+        arc_angle = angle + i * 60
+        x1 = cx + (r - 8) * math.cos(math.radians(arc_angle))
+        y1 = cy + (r - 8) * math.sin(math.radians(arc_angle))
+        x2 = cx + (r - 5) * math.cos(math.radians(arc_angle + 40))
+        y2 = cy + (r - 5) * math.sin(math.radians(arc_angle + 40))
+        orb_canvas.create_line(x1, y1, x2, y2, fill=color_ring, width=2, smooth=True)
+
+    # Floating plasma dots
+    for i in range(8):
+        dot_angle = angle * 1.5 + i * 45
+        dot_r = r - 10 + math.sin(math.radians(angle + i * 30)) * 8
+        dx = cx + dot_r * math.cos(math.radians(dot_angle))
+        dy = cy + dot_r * math.sin(math.radians(dot_angle))
+        orb_canvas.create_oval(dx-2, dy-2, dx+2, dy+2, fill=color_ring, outline="")
+
+    # 3D highlight
+    orb_canvas.create_oval(cx-15, cy-22, cx-5, cy-12, fill="#aaffff", outline="")
+    orb_canvas.create_oval(cx-13, cy-20, cx-8, cy-15, fill="#ffffff", outline="")
+
+def animate_orb():
+    mode = orb_state["mode"]
+    angle = orb_state["angle"]
+
+    if mode == "idle":
+        draw_plasma_orb("#001a33", "#003366", "#0066aa", "#00ccff", angle)
+        orb_state["angle"] = (angle + 2) % 360
+        app.after(50, animate_orb)
+
+    elif mode == "processing":
+        draw_plasma_orb("#1a1a00", "#336600", "#66aa00", "#ffff00", angle)
+        orb_state["angle"] = (angle + 6) % 360
+        app.after(30, animate_orb)
+
+    elif mode == "speaking":
+        draw_plasma_orb("#001a00", "#006633", "#00aa66", "#00ffcc", angle)
+        orb_state["angle"] = (angle + 4) % 360
+        app.after(40, animate_orb)
+
+def set_orb_mode(mode):
+    orb_state["mode"] = mode
+
+animate_orb()
+
+# Startup message
+log("=" * 60)
+log("  ██╗  ██╗██╗██████╗  █████╗ ")
+log("  ██║ ██╔╝██║██╔══██╗██╔══██╗")
+log("  █████╔╝ ██║██████╔╝███████║")
+log("  ██╔═██╗ ██║██╔══██╗██╔══██║")
+log("  ██║  ██╗██║██║  ██║██║  ██║")
+log("  ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝╚═╝  ╚═╝")
+log("=" * 60)
+log("  KIRA v1.0 — Kinetic Intelligence & Response Assistant")
+log("  STATUS: ALL SYSTEMS ONLINE")
+log("=" * 60)
+log("")
+
+threading.Thread(target=lambda: speak("KIRA online. All systems ready. How can I assist you?"), daemon=True).start()
+
+app.mainloop()
