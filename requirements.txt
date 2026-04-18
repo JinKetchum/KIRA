@@ -1,0 +1,10 @@
+customtkinter
+speechrecognition
+pyaudio
+groq
+python-dotenv
+requests
+pyautogui
+pillow
+pygame
+edge-tts
