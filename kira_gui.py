@@ -450,6 +450,64 @@ def file_manager(action, path, extra=""):
         speak("Sorry, I couldn't complete that file operation.")
         log(f"File error: {e}", "#ff0000")
 
+import pytesseract
+from PIL import ImageGrab
+
+# Set tesseract path
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+
+def read_screen():
+    try:
+        speak("Let me look at your screen...")
+        screenshot = ImageGrab.grab()
+        text = pytesseract.image_to_string(screenshot)
+        if text.strip():
+            log("=" * 40, "#00ffff")
+            log("👁️ SCREEN CONTENT:", "#00ffff")
+            log(text[:500], "#ffffff")  # Show first 500 chars
+            log("=" * 40, "#00ffff")
+            speak("I can see text on your screen. Here's what I found.")
+            
+            # Ask KIRA to summarize
+            summary = ask_kira(f"Summarize this screen content briefly: {text[:1000]}")
+            speak(summary)
+        else:
+            speak("I couldn't find any readable text on your screen.")
+    except Exception as e:
+        speak("Sorry, I couldn't read your screen.")
+        log(f"Screen read error: {e}", "#ff0000")
+
+def analyze_screen_question(question):
+    try:
+        speak("Analyzing your screen...")
+        screenshot = ImageGrab.grab()
+        text = pytesseract.image_to_string(screenshot)
+        if text.strip():
+            prompt = f"Based on this screen content: {text[:1000]}\n\nAnswer this question: {question}"
+            answer = ask_kira(prompt)
+            speak(answer)
+        else:
+            speak("I couldn't read enough from your screen to answer that.")
+    except Exception as e:
+        speak("Sorry, I couldn't analyze your screen.")
+        log(f"Screen analyze error: {e}", "#ff0000")
+
+def describe_screen():
+    try:
+        speak("Taking a look at your screen...")
+        screenshot = ImageGrab.grab()
+        # Save temp screenshot
+        temp_path = "E:\\KIRA\\temp_screen.png"
+        screenshot.save(temp_path)
+        text = pytesseract.image_to_string(screenshot)
+        prompt = f"Describe what appears to be on a computer screen based on this extracted text: {text[:1000]}. Be brief and natural."
+        description = ask_kira(prompt)
+        speak(description)
+        log(f"👁️ {description}", "#00ffff")
+    except Exception as e:
+        speak("Sorry, I couldn't describe your screen.")
+        log(f"Screen describe error: {e}", "#ff0000")
+
 def handle_command(query):
     if not query:
         return
@@ -598,6 +656,19 @@ def handle_command(query):
         log("KIRA ▶ Format: C:\\source\\file.txt|C:\\destination\\", "#00ffff")
         app.after(100, lambda: setattr(app, '_move_mode', True))
         app.after(2000, app.destroy)
+
+    elif "read screen" in query or "read my screen" in query:
+        threading.Thread(target=read_screen, daemon=True).start()
+
+    elif "describe screen" in query or "what's on my screen" in query:
+        threading.Thread(target=describe_screen, daemon=True).start()
+
+    elif "what does" in query and "screen" in query:
+        question = query.replace("screen", "").replace("what does", "").strip()
+        threading.Thread(target=lambda: analyze_screen_question(question), daemon=True).start()
+
+    elif "look at screen" in query or "analyze screen" in query:
+        threading.Thread(target=describe_screen, daemon=True).start()
     else:
         speak("Let me think...")
         threading.Thread(target=lambda: speak(ask_kira(query)), daemon=True).start()
