@@ -1615,7 +1615,7 @@ log("  ██╔═██╗ ██║██╔══██╗██╔══█
 log("  ██║  ██╗██║██║  ██║██║  ██║")
 log("  ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝╚═╝  ╚═╝")
 log("=" * 60)
-log("  KIRA v1.0 — Kinetic Intelligence & Response Assistant")
+log("  KIRA v1.4 — Kinetic Intelligence & Response Assistant")
 log("  STATUS: ALL SYSTEMS ONLINE")
 log("=" * 60)
 log("")
