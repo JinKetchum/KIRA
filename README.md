@@ -26,3 +26,22 @@ A fully-featured personal AI assistant built with Python.
 6. Run: `python kira_gui.py`
 
 ## Environment Variables
+Create a `.env` file in the root folder with these keys:
+GROQ_API_KEY=your_key
+WEATHER_API_KEY=your_key
+NEWS_API_KEY=your_key
+EMAIL_ADDRESS=your_email
+EMAIL_PASSWORD=your_app_password
+
+## Built With
+- [Python](https://python.org)
+- [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) — Modern GUI
+- [Groq API](https://groq.com) — AI Brain (LLaMA 3.3)
+- [Edge TTS](https://github.com/rany2/edge-tts) — Neural voice
+- [SpeechRecognition](https://pypi.org/project/SpeechRecognition/) — Voice input
+- [OpenWeatherMap](https://openweathermap.org) — Weather
+- [NewsAPI](https://newsapi.org) — News headlines
+- [Pygame](https://pygame.org) — Audio playback
+
+## Author
+Made with 🔥 by JinKetchum

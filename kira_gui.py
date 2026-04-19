@@ -17,8 +17,7 @@ import edge_tts
 
 async def _async_speak(text):
     communicate = edge_tts.Communicate(text, voice="en-US-AriaNeural")
-    await communicate.save("temp_speech.mp3")
-
+    await communicate.save("E:\\KIRA\\temp_speech.mp3")
 # Load env
 load_dotenv()
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
@@ -38,6 +37,111 @@ def save_memory(history):
         json.dump(history, f, indent=2)
 
 conversation_history = load_memory()
+
+KNOWLEDGE_FILE = os.path.join(os.path.expanduser("~"), "Documents", "kira_knowledge.json")
+
+def load_knowledge():
+    if os.path.exists(KNOWLEDGE_FILE):
+        with open(KNOWLEDGE_FILE, "r") as f:
+            return json.load(f)
+    return {"personal": {}, "preferences": {}, "tasks": [], "facts": []}
+
+def save_knowledge(knowledge):
+    with open(KNOWLEDGE_FILE, "w") as f:
+        json.dump(knowledge, f, indent=2)
+
+def extract_facts(conversation):
+    try:
+        prompt = f"""
+        Analyze this conversation and extract key facts about the user.
+        Return ONLY a JSON object with these exact keys:
+        {{
+            "personal": {{"name": "", "age": "", "location": "", "occupation": ""}},
+            "preferences": {{"likes": [], "dislikes": [], "hobbies": []}},
+            "facts": ["fact1", "fact2"]
+        }}
+        Only include fields that are clearly mentioned. Leave others empty.
+        Conversation: {conversation}
+        Return ONLY the JSON, no other text.
+        """
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=500
+        )
+        raw = response.choices[0].message.content
+        clean = raw.replace("```json", "").replace("```", "").strip()
+        new_facts = json.loads(clean)
+        
+        knowledge = load_knowledge()
+        
+        # Merge personal info
+        for key, value in new_facts.get("personal", {}).items():
+            if value:
+                knowledge["personal"][key] = value
+        
+        # Merge preferences
+        for key, value in new_facts.get("preferences", {}).items():
+            if value:
+                if key not in knowledge["preferences"]:
+                    knowledge["preferences"][key] = []
+                for item in value:
+                    if item and item not in knowledge["preferences"][key]:
+                        knowledge["preferences"][key].append(item)
+        
+        # Merge facts
+        for fact in new_facts.get("facts", []):
+            if fact and fact not in knowledge["facts"]:
+                knowledge["facts"].append(fact)
+        
+        save_knowledge(knowledge)
+    except Exception as e:
+        print(f"Fact extraction error: {e}")
+
+def build_context():
+    knowledge = load_knowledge()
+    context = ""
+    
+    if knowledge["personal"]:
+        personal = {k: v for k, v in knowledge["personal"].items() if v}
+        if personal:
+            context += f"User info: {personal}. "
+    
+    if knowledge["preferences"]:
+        prefs = {k: v for k, v in knowledge["preferences"].items() if v}
+        if prefs:
+            context += f"User preferences: {prefs}. "
+    
+    if knowledge["facts"]:
+        context += f"Known facts: {', '.join(knowledge['facts'][-5:])}. "
+    
+    return context
+
+def show_knowledge():
+    knowledge = load_knowledge()
+    log("=" * 40, "#00ffff")
+    log("📚 KIRA'S KNOWLEDGE BASE", "#00ffff")
+    log("=" * 40, "#00ffff")
+    
+    if knowledge["personal"]:
+        log("👤 Personal:", "#ffff00")
+        for k, v in knowledge["personal"].items():
+            if v:
+                log(f"   {k}: {v}", "#ffffff")
+    
+    if knowledge["preferences"]:
+        log("❤️ Preferences:", "#ffff00")
+        for k, v in knowledge["preferences"].items():
+            if v:
+                log(f"   {k}: {', '.join(v)}", "#ffffff")
+    
+    if knowledge["facts"]:
+        log("📌 Facts:", "#ffff00")
+        for fact in knowledge["facts"]:
+            log(f"   • {fact}", "#ffffff")
+    
+    log("=" * 40, "#00ffff")
+    speak("Here's what I know about you!")
 
 # ── GUI Setup ──────────────────────────────────────────────
 ctk.set_appearance_mode("dark")
@@ -150,7 +254,7 @@ def speak(text):
             asyncio.run(_async_speak(text))
             import pygame
             pygame.mixer.init()
-            pygame.mixer.music.load("temp_speech.mp3")
+            pygame.mixer.music.load("E:\\KIRA\\temp_speech.mp3")
             pygame.mixer.music.play()
             while pygame.mixer.music.get_busy():
                 import time
@@ -162,15 +266,34 @@ def speak(text):
     threading.Thread(target=_speak, daemon=True).start()
 
 def ask_kira(prompt):
-    conversation_history.append({"role": "user", "content": prompt})
+    # Build smart context
+    context = build_context()
+    
+    # Inject context into system message
+    messages = [
+        {
+            "role": "system",
+            "content": f"You are KIRA (Kinetic Intelligence & Response Assistant), a helpful, smart and friendly AI assistant. Keep responses concise and clear. {context}"
+        }
+    ] + conversation_history[1:]  # Skip old system message
+    
+    messages.append({"role": "user", "content": prompt})
+    
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
-        messages=conversation_history,
+        messages=messages,
         max_tokens=500
     )
     reply = response.choices[0].message.content
+    
+    conversation_history.append({"role": "user", "content": prompt})
     conversation_history.append({"role": "assistant", "content": reply})
     save_memory(conversation_history)
+    
+    # Extract facts in background
+    recent = f"User: {prompt}\nKIRA: {reply}"
+    threading.Thread(target=extract_facts, args=(recent,), daemon=True).start()
+    
     return reply
 
 def send_email(to, subject, body):
@@ -418,6 +541,7 @@ def handle_command(query):
         conversation_history.append({"role": "system", "content": "You are KIRA (Kinetic Intelligence & Response Assistant), a helpful, smart and friendly AI assistant. Keep responses concise and clear."})
         save_memory(conversation_history)
         speak("Memory cleared! Starting fresh.")
+    
     elif "add event" in query or "add to calendar" in query:
         speak("What is the event title?")
         log("KIRA ▶ Type: title|YYYY-MM-DD|HH:MM in the input box", "#00ffff")
@@ -458,6 +582,16 @@ def handle_command(query):
         speak("Type: old path|new name")
         log("KIRA ▶ Format: C:\\path\\oldname.txt|newname.txt", "#00ffff")
         app.after(100, lambda: setattr(app, '_rename_mode', True))
+
+    elif "what do you know" in query or "show knowledge" in query:
+        show_knowledge()
+
+    elif "forget" in query and "memory" not in query:
+        fact = query.replace("forget", "").strip()
+        knowledge = load_knowledge()
+        knowledge["facts"] = [f for f in knowledge["facts"] if fact.lower() not in f.lower()]
+        save_knowledge(knowledge)
+        speak(f"I've forgotten everything about {fact}!")
 
     elif "move file" in query:
         speak("Type: source path|destination path")
