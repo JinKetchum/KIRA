@@ -16,8 +16,11 @@ import asyncio
 import edge_tts
 
 async def _async_speak(text):
+    import asyncio
+    await asyncio.sleep(0.3)
     communicate = edge_tts.Communicate(text, voice="en-US-AriaNeural")
     await communicate.save("E:\\KIRA\\temp_speech.mp3")
+
 # Load env
 load_dotenv()
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
@@ -824,6 +827,234 @@ def get_walkthrough(game_name, situation):
     except Exception as e:
         speak("Sorry, couldn't fetch walkthrough right now.")
 
+import threading
+
+REMINDERS_FILE = "E:\\KIRA\\kira_reminders.json"
+
+def load_reminders():
+    if os.path.exists(REMINDERS_FILE):
+        with open(REMINDERS_FILE, "r") as f:
+            return json.load(f)
+    return []
+
+def save_reminders(reminders):
+    with open(REMINDERS_FILE, "w") as f:
+        json.dump(reminders, f, indent=2)
+
+def set_reminder(message, minutes):
+    try:
+        remind_time = datetime.datetime.now() + datetime.timedelta(minutes=minutes)
+        reminders = load_reminders()
+        reminder = {
+            "message": message,
+            "time": remind_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "done": False
+        }
+        reminders.append(reminder)
+        save_reminders(reminders)
+        speak(f"Reminder set! I'll remind you in {minutes} minutes.")
+        log(f"🔔 Reminder set for {remind_time.strftime('%I:%M %p')}: {message}", "#ffff00")
+
+        def trigger():
+            import time
+            time.sleep(minutes * 60)
+            speak(f"Reminder! {message}")
+            log(f"🔔 REMINDER: {message}", "#ff9900")
+
+        threading.Thread(target=trigger, daemon=True).start()
+    except Exception as e:
+        speak("Sorry, I couldn't set that reminder.")
+        log(f"Reminder error: {e}", "#ff0000")
+
+def show_reminders():
+    reminders = load_reminders()
+    pending = [r for r in reminders if not r["done"]]
+    if pending:
+        speak(f"You have {len(pending)} pending reminder(s):")
+        log("=" * 40, "#00ffff")
+        log("🔔 PENDING REMINDERS", "#00ffff")
+        log("=" * 40, "#00ffff")
+        for i, r in enumerate(pending, 1):
+            log(f"{i}. {r['time']} — {r['message']}", "#ffff00")
+    else:
+        speak("You have no pending reminders!")
+
+def cancel_reminder(keyword):
+    reminders = load_reminders()
+    new_reminders = [r for r in reminders if keyword.lower() not in r["message"].lower()]
+    if len(new_reminders) < len(reminders):
+        save_reminders(new_reminders)
+        speak(f"Reminder cancelled!")
+    else:
+        speak(f"No reminder found with that keyword!")
+
+def translate_text(text, target_language):
+    try:
+        speak(f"Translating to {target_language}...")
+        prompt = f"Translate this text to {target_language}. Return ONLY the translated text, nothing else: {text}"
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=500
+        )
+        translation = response.choices[0].message.content.strip()
+        speak(f"Translation: {translation}")
+        log("=" * 40, "#00ffff")
+        log(f"🌍 TRANSLATION ({target_language})", "#00ffff")
+        log(f"Original: {text}", "#ffffff")
+        log(f"Translated: {translation}", "#ffff00")
+        log("=" * 40, "#00ffff")
+    except Exception as e:
+        speak("Sorry, I couldn't translate that.")
+        log(f"Translation error: {e}", "#ff0000")
+    
+from bs4 import BeautifulSoup
+
+def scrape_website(url):
+    try:
+        speak("Let me read that website for you...")
+        headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.5",
+                    "Accept-Encoding": "gzip, deflate",
+                    "Connection": "keep-alive",
+                  }
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.content, "html.parser")
+
+        # Remove scripts and styles
+        for script in soup(["script", "style"]):
+            script.decompose()
+
+        text = soup.get_text()
+        lines = (line.strip() for line in text.splitlines())
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        clean_text = " ".join(chunk for chunk in chunks if chunk)[:2000]
+
+        log("=" * 40, "#00ffff")
+        log("🌐 WEBSITE CONTENT", "#00ffff")
+        log("=" * 40, "#00ffff")
+        log(clean_text[:500], "#ffffff")
+        log("=" * 40, "#00ffff")
+
+        summary = ask_kira(f"Summarize this webpage content in 3 sentences: {clean_text}")
+        speak(summary)
+        log(f"📝 Summary: {summary}", "#ffff00")
+
+    except Exception as e:
+        speak("Sorry, I couldn't read that website.")
+        log(f"Scrape error: {e}", "#ff0000")
+
+def scrape_price(url):
+    try:
+        speak("Let me check that price for you...")
+        headers = headers = {
+                                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                                "Accept-Language": "en-US,en;q=0.5",
+                                "Accept-Encoding": "gzip, deflate",
+                                "Connection": "keep-alive",
+                            }
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.content, "html.parser")
+
+        # Remove scripts
+        for script in soup(["script", "style"]):
+            script.decompose()
+
+        text = soup.get_text()
+        lines = (line.strip() for line in text.splitlines())
+        clean_text = " ".join(line for line in lines if line)[:2000]
+
+        price_info = ask_kira(f"Extract the product name and price from this webpage text. Be brief: {clean_text}")
+        speak(price_info)
+        log(f"💰 {price_info}", "#ffff00")
+
+    except Exception as e:
+        speak("Sorry, I couldn't check that price.")
+        log(f"Price check error: {e}", "#ff0000")
+
+def summarize_article(url):
+    try:
+        speak("Reading and summarizing that article...")
+        headers = headers = {
+                                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                                "Accept-Language": "en-US,en;q=0.5",
+                                "Accept-Encoding": "gzip, deflate",
+                                "Connection": "keep-alive",
+                            }
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.content, "html.parser")
+
+        # Get article paragraphs
+        paragraphs = soup.find_all("p")
+        text = " ".join([p.get_text() for p in paragraphs])[:3000]
+
+        if text.strip():
+            summary = ask_kira(f"Summarize this article in 5 sentences: {text}")
+            speak(summary)
+            log("=" * 40, "#00ffff")
+            log("📰 ARTICLE SUMMARY", "#00ffff")
+            log("=" * 40, "#00ffff")
+            log(summary, "#ffff00")
+        else:
+            speak("I couldn't extract article content from that page.")
+
+    except Exception as e:
+        speak("Sorry, I couldn't summarize that article.")
+        log(f"Article error: {e}", "#ff0000")
+
+import pywhatkit
+
+def send_whatsapp(phone, message, hour, minute):
+    try:
+        speak(f"Sending WhatsApp message in a moment...")
+        log(f"📱 Sending WhatsApp to {phone} at {hour}:{minute:02d}", "#ffff00")
+        pywhatkit.sendwhatmsg(phone, message, hour, minute, wait_time=15, tab_close=True)
+        speak("WhatsApp message sent successfully!")
+    except Exception as e:
+        speak("Sorry, I couldn't send that WhatsApp message.")
+        log(f"WhatsApp error: {e}", "#ff0000")
+
+def send_whatsapp_now(phone, message):
+    try:
+        speak("Sending WhatsApp message now...")
+        now = datetime.datetime.now()
+        hour = now.hour
+        minute = now.minute + 2  # 2 minutes from now
+        if minute >= 60:
+            minute -= 60
+            hour += 1
+        pywhatkit.sendwhatmsg(phone, message, hour, minute, wait_time=15, tab_close=True)
+        speak("WhatsApp message sent!")
+    except Exception as e:
+        speak("Sorry, I couldn't send that WhatsApp message.")
+        log(f"WhatsApp error: {e}", "#ff0000")
+
+def generate_image(prompt):
+    try:
+        speak(f"Generating image, please wait...")
+        log(f"🎨 Generating: {prompt}", "#ffff00")
+        
+        encoded_prompt = prompt.replace(" ", "%20")
+        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=512&height=512&nologo=true"
+        
+        response = requests.get(url, timeout=60)  # increased to 60 seconds
+        if response.status_code == 200:
+            img_path = "E:\\KIRA\\kira_generated.png"
+            with open(img_path, "wb") as f:
+                f.write(response.content)
+            speak("Image generated! Opening it now!")
+            log(f"🎨 Image saved!", "#ffff00")
+            os.startfile(img_path)
+        else:
+            speak("Sorry, I couldn't generate that image.")
+    except Exception as e:
+        speak("Sorry, image generation failed. Try again!")
+        log(f"Image error: {e}", "#ff0000")
+
 def handle_command(query):
     if not query:
         return
@@ -1041,6 +1272,72 @@ def handle_command(query):
 
     elif "game bug" in query or "game not working" in query:
         game_assistant(query)
+    
+    elif "remind me" in query or "set reminder" in query:
+        speak("What should I remind you about?")
+        log("KIRA ▶ Type: message|minutes (e.g. drink water|30)", "#00ffff")
+        app.after(100, lambda: setattr(app, '_reminder_mode', True))
+
+    elif "show reminders" in query or "my reminders" in query:
+        show_reminders()
+
+    elif "cancel reminder" in query:
+        keyword = query.replace("cancel reminder", "").strip()
+        if keyword:
+            cancel_reminder(keyword)
+        else:
+            speak("Which reminder should I cancel?")
+            log("KIRA ▶ Type the reminder keyword", "#00ffff")
+            app.after(100, lambda: setattr(app, '_cancel_reminder_mode', True))
+    
+    elif "translate" in query:
+        speak("Type: text|language")
+        log("KIRA ▶ Format: Hello how are you|Spanish", "#00ffff")
+        app.after(100, lambda: setattr(app, '_translate_mode', True))
+
+    elif "how do you say" in query:
+        # e.g. "how do you say hello in Japanese"
+        parts = query.replace("how do you say", "").strip()
+        if " in " in parts:
+            text, lang = parts.split(" in ", 1)
+            translate_text(text.strip(), lang.strip())
+        else:
+            speak("Please say: how do you say [word] in [language]")
+    
+    elif "read website" in query or "scrape" in query:
+        speak("Paste the website URL in the input box!")
+        log("KIRA ▶ Type the full URL (e.g. https://example.com)", "#00ffff")
+        app.after(100, lambda: setattr(app, '_scrape_mode', True))
+
+    elif "check price" in query or "price of" in query:
+        speak("Paste the product URL in the input box!")
+        log("KIRA ▶ Type the full product URL", "#00ffff")
+        app.after(100, lambda: setattr(app, '_price_mode', True))
+
+    elif "summarize article" in query or "summarize this" in query:
+        speak("Paste the article URL in the input box!")
+        log("KIRA ▶ Type the full article URL", "#00ffff")
+        app.after(100, lambda: setattr(app, '_article_mode', True))
+    
+    elif "whatsapp" in query or "send whatsapp" in query:
+        speak("Type: phone|message")
+        log("KIRA ▶ Format: +919876543210|Hey how are you?", "#00ffff")
+        log("KIRA ▶ Phone must start with country code e.g. +91 for India", "#00ffff")
+        app.after(100, lambda: setattr(app, '_whatsapp_mode', True))
+
+    elif "generate image" in query or "create image" in query or "draw" in query:
+        prompt = query.replace("generate image", "").replace("create image", "").replace("draw", "").strip()
+        if not prompt or len(prompt) < 3:
+            speak("What should I generate?")
+            log("KIRA ▶ Type your image description in the input box", "#00ffff")
+            app.after(100, lambda: setattr(app, '_image_mode', True))
+            return
+        if prompt:
+            threading.Thread(target=generate_image, args=(prompt,), daemon=True).start()
+        else:
+            speak("What should I generate?")
+            log("KIRA ▶ Type your image description in the input box", "#00ffff")
+            app.after(100, lambda: setattr(app, '_image_mode', True))
 
     else:
         speak("Let me think...")
@@ -1052,6 +1349,71 @@ def handle_command(query):
 def process_input(event=None):
     query = input_box.get().strip()
     if not query:
+        return
+    
+    if getattr(app, '_image_mode', False):
+        app._image_mode = False
+        input_box.delete(0, "end")
+        threading.Thread(target=generate_image, args=(query,), daemon=True).start()
+        return
+    
+    if getattr(app, '_whatsapp_mode', False):
+        app._whatsapp_mode = False
+        input_box.delete(0, "end")
+        parts = query.split("|")
+        if len(parts) == 2:
+            phone = parts[0].strip()
+            message = parts[1].strip()
+            threading.Thread(target=send_whatsapp_now, args=(phone, message), daemon=True).start()
+        else:
+            speak("Please use format: phone|message")
+        return
+
+    if getattr(app, '_scrape_mode', False):
+        app._scrape_mode = False
+        input_box.delete(0, "end")
+        threading.Thread(target=scrape_website, args=(query,), daemon=True).start()
+        return
+
+    if getattr(app, '_price_mode', False):
+        app._price_mode = False
+        input_box.delete(0, "end")
+        threading.Thread(target=scrape_price, args=(query,), daemon=True).start()
+        return
+
+    if getattr(app, '_article_mode', False):
+        app._article_mode = False
+        input_box.delete(0, "end")
+        threading.Thread(target=summarize_article, args=(query,), daemon=True).start()
+        return
+    
+    if getattr(app, '_translate_mode', False):
+        app._translate_mode = False
+        input_box.delete(0, "end")
+        parts = query.split("|")
+        if len(parts) == 2:
+            translate_text(parts[0].strip(), parts[1].strip())
+        else:
+            speak("Please use format: text|language")
+        return
+    
+    if getattr(app, '_reminder_mode', False):
+        app._reminder_mode = False
+        input_box.delete(0, "end")
+        parts = query.split("|")
+        if len(parts) == 2:
+            try:
+                set_reminder(parts[0].strip(), int(parts[1].strip()))
+            except:
+                speak("Please use format: message|minutes")
+        else:
+            speak("Please use format: message|minutes")
+        return
+
+    if getattr(app, '_cancel_reminder_mode', False):
+        app._cancel_reminder_mode = False
+        input_box.delete(0, "end")
+        cancel_reminder(query)
         return
     
     if getattr(app, '_launch_game_mode', False):
@@ -1221,18 +1583,22 @@ def animate_orb():
     angle = orb_state["angle"]
 
     if mode == "idle":
+        # Full 360 rotation in 5 seconds
+        # 360 degrees / (5000ms / 50ms per frame) = 3.6 degrees per frame
         draw_plasma_orb("#001a33", "#003366", "#0066aa", "#00ccff", angle)
-        orb_state["angle"] = (angle + 2) % 360
+        orb_state["angle"] = (angle + 3.6) % 360
         app.after(50, animate_orb)
 
     elif mode == "processing":
+        # Faster rotation when processing
         draw_plasma_orb("#1a1a00", "#336600", "#66aa00", "#ffff00", angle)
-        orb_state["angle"] = (angle + 6) % 360
+        orb_state["angle"] = (angle + 8) % 360
         app.after(30, animate_orb)
 
     elif mode == "speaking":
+        # Medium rotation when speaking
         draw_plasma_orb("#001a00", "#006633", "#00aa66", "#00ffcc", angle)
-        orb_state["angle"] = (angle + 4) % 360
+        orb_state["angle"] = (angle + 5) % 360
         app.after(40, animate_orb)
 
 def set_orb_mode(mode):
