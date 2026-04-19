@@ -248,6 +248,7 @@ def listen():
     
 def speak(text):
     log(f"KIRA ▶ {text}", "#00ffff")
+    update_overlay_message(text)
     def _speak():
         try:
             set_orb_mode("speaking")
@@ -508,6 +509,321 @@ def describe_screen():
         speak("Sorry, I couldn't describe your screen.")
         log(f"Screen describe error: {e}", "#ff0000")
 
+GAMES_FILE = "E:\\KIRA\\kira_games.json"
+
+def load_games():
+    if os.path.exists(GAMES_FILE):
+        with open(GAMES_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+def launch_game(game_name):
+    games = load_games()
+    matched = None
+    for key in games:
+        if key.lower() in game_name.lower() or game_name.lower() in key.lower():
+            matched = key
+            break
+    if matched:
+        path = games[matched]
+        if os.path.exists(path):
+            speak(f"Launching {matched}! Have fun!")
+            subprocess.Popen(path)
+            start_tracking(matched)
+        else:
+            speak(f"I found {matched} but couldn't locate the file. Check the path!")
+    else:
+        speak(f"I don't know where {game_name} is installed. Add it to kira_games.json!")
+
+def list_games():
+    games = load_games()
+    if games:
+        speak(f"I know {len(games)} games:")
+        for game in games:
+            log(f"🎮 {game}", "#ffff00")
+        speak("Check the terminal for the full list!")
+    else:
+        speak("No games added yet. Edit kira_games.json to add your games!")
+
+def add_game(name, path):
+    games = load_games()
+    games[name.lower()] = path
+    with open(GAMES_FILE, "w") as f:
+        json.dump(games, f, indent=2)
+    speak(f"Added {name} to my games list!")
+
+STATS_FILE = "E:\\KIRA\\kira_game_stats.json"
+
+def load_stats():
+    if os.path.exists(STATS_FILE):
+        with open(STATS_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+def save_stats(stats):
+    with open(STATS_FILE, "w") as f:
+        json.dump(stats, f, indent=2)
+
+def start_tracking(game_name):
+    app._current_game = game_name
+    app._game_start_time = datetime.datetime.now()
+    log(f"🎮 Tracking session for {game_name}...", "#ffff00")
+
+def stop_tracking():
+    if not getattr(app, '_current_game', None):
+        speak("No game session is being tracked!")
+        return
+    
+    game = app._current_game
+    start = app._game_start_time
+    end = datetime.datetime.now()
+    duration = (end - start).seconds // 60  # minutes
+
+    stats = load_stats()
+    if game not in stats:
+        stats[game] = {
+            "total_minutes": 0,
+            "sessions": 0,
+            "last_played": "",
+            "longest_session": 0
+        }
+
+    stats[game]["total_minutes"] += duration
+    stats[game]["sessions"] += 1
+    stats[game]["last_played"] = end.strftime("%Y-%m-%d %I:%M %p")
+    if duration > stats[game]["longest_session"]:
+        stats[game]["longest_session"] = duration
+
+    save_stats(stats)
+    app._current_game = None
+    speak(f"Session ended! You played {game} for {duration} minutes!")
+
+def show_stats(game_name=None):
+    stats = load_stats()
+    if not stats:
+        speak("No game stats recorded yet!")
+        return
+
+    log("=" * 40, "#00ffff")
+    log("🎮 GAME STATS", "#00ffff")
+    log("=" * 40, "#00ffff")
+
+    if game_name:
+        matched = None
+        for key in stats:
+            if game_name.lower() in key.lower():
+                matched = key
+                break
+        if matched:
+            s = stats[matched]
+            hours = s["total_minutes"] // 60
+            mins = s["total_minutes"] % 60
+            log(f"🎮 {matched.upper()}", "#ffff00")
+            log(f"   ⏱️ Total: {hours}h {mins}m", "#ffffff")
+            log(f"   🔄 Sessions: {s['sessions']}", "#ffffff")
+            log(f"   📅 Last played: {s['last_played']}", "#ffffff")
+            log(f"   🏆 Longest: {s['longest_session']} mins", "#ffffff")
+            speak(f"You've played {matched} for {hours} hours and {mins} minutes across {s['sessions']} sessions!")
+        else:
+            speak(f"No stats found for {game_name}!")
+    else:
+        most_played = max(stats, key=lambda x: stats[x]["total_minutes"])
+        for game, s in stats.items():
+            hours = s["total_minutes"] // 60
+            mins = s["total_minutes"] % 60
+            log(f"🎮 {game}: {hours}h {mins}m | {s['sessions']} sessions", "#ffff00")
+        speak(f"Your most played game is {most_played}!")
+
+import psutil
+
+# ── Gaming Overlay ─────────────────────────────────────────
+overlay = None
+overlay_running = False
+
+def create_overlay():
+    global overlay, overlay_running
+
+    if overlay_running:
+        speak("Overlay is already running!")
+        return
+
+    overlay = ctk.CTkToplevel(app)
+    overlay.title("")
+    overlay.geometry("250x180+10+10")  # Top left corner
+    overlay.attributes("-topmost", True)  # Always on top
+    overlay.attributes("-alpha", 0.85)  # Slightly transparent
+    overlay.overrideredirect(True)  # No title bar
+    overlay.configure(fg_color="#0a0a0a")
+    overlay_running = True
+
+    # Header
+    overlay_header = ctk.CTkLabel(
+        overlay,
+        text="◈ KIRA OVERLAY ◈",
+        font=ctk.CTkFont(family="Courier", size=10, weight="bold"),
+        text_color="#00ffff"
+    )
+    overlay_header.pack(pady=(5, 0))
+
+    # Time label
+    overlay_time = ctk.CTkLabel(
+        overlay,
+        text="",
+        font=ctk.CTkFont(family="Courier", size=11),
+        text_color="#00ff99"
+    )
+    overlay_time.pack()
+
+    # Session timer
+    overlay_session = ctk.CTkLabel(
+        overlay,
+        text="",
+        font=ctk.CTkFont(family="Courier", size=10),
+        text_color="#ffff00"
+    )
+    overlay_session.pack()
+
+    # CPU/RAM
+    overlay_system = ctk.CTkLabel(
+        overlay,
+        text="",
+        font=ctk.CTkFont(family="Courier", size=10),
+        text_color="#ff9900"
+    )
+    overlay_system.pack()
+
+    # KIRA message
+    overlay_msg = ctk.CTkLabel(
+        overlay,
+        text="KIRA ready!",
+        font=ctk.CTkFont(family="Courier", size=10),
+        text_color="#ffffff",
+        wraplength=230
+    )
+    overlay_msg.pack(pady=(5, 0))
+
+    # Close button
+    close_btn = ctk.CTkButton(
+        overlay,
+        text="✕",
+        width=20,
+        height=20,
+        fg_color="#330000",
+        hover_color="#550000",
+        text_color="#ff0000",
+        command=close_overlay
+    )
+    close_btn.pack(pady=(5, 0))
+
+    # Make overlay draggable
+    def start_drag(event):
+        overlay._drag_start_x = event.x
+        overlay._drag_start_y = event.y
+
+    def do_drag(event):
+        x = overlay.winfo_x() + event.x - overlay._drag_start_x
+        y = overlay.winfo_y() + event.y - overlay._drag_start_y
+        overlay.geometry(f"+{x}+{y}")
+
+    overlay.bind("<Button-1>", start_drag)
+    overlay.bind("<B1-Motion>", do_drag)
+
+    # Store references
+    app._overlay_time = overlay_time
+    app._overlay_session = overlay_session
+    app._overlay_system = overlay_system
+    app._overlay_msg = overlay_msg
+
+    speak("Gaming overlay activated!")
+    update_overlay()
+
+def update_overlay():
+    global overlay_running
+    if not overlay_running or not overlay:
+        return
+    try:
+        # Time
+        now = datetime.datetime.now().strftime("%I:%M:%S %p")
+        app._overlay_time.configure(text=f"🕐 {now}")
+
+        # Session timer
+        if getattr(app, '_game_start_time', None):
+            elapsed = datetime.datetime.now() - app._game_start_time
+            mins = elapsed.seconds // 60
+            secs = elapsed.seconds % 60
+            game = getattr(app, '_current_game', 'Unknown')
+            app._overlay_session.configure(text=f"🎮 {game}: {mins:02d}:{secs:02d}")
+        else:
+            app._overlay_session.configure(text="🎮 No game running")
+
+        # CPU/RAM
+        cpu = psutil.cpu_percent()
+        ram = psutil.virtual_memory().percent
+        app._overlay_system.configure(text=f"💻 CPU: {cpu}% | RAM: {ram}%")
+
+        overlay.after(1000, update_overlay)
+    except:
+        overlay_running = False
+
+def close_overlay():
+    global overlay, overlay_running
+    overlay_running = False
+    if overlay:
+        overlay.destroy()
+        overlay = None
+    speak("Overlay closed!")
+
+def update_overlay_message(msg):
+    if overlay_running and overlay:
+        try:
+            app._overlay_msg.configure(text=f"KIRA: {msg[:50]}")
+        except:
+            pass
+
+def game_assistant(query, game=None):
+    try:
+        current_game = game or getattr(app, '_current_game', None)
+        if current_game:
+            prompt = f"You are a game expert for {current_game}. Answer this question briefly and helpfully: {query}"
+        else:
+            prompt = f"You are a gaming expert. Answer this question briefly and helpfully: {query}"
+        
+        speak("Let me check that for you...")
+        response = ask_kira(prompt)
+        speak(response)
+        log(f"🎮 {response}", "#ffff00")
+    except Exception as e:
+        speak("Sorry, I couldn't find an answer for that.")
+        log(f"Game assistant error: {e}", "#ff0000")
+
+def get_game_tips(game_name):
+    try:
+        game = game_name or getattr(app, '_current_game', None)
+        if not game:
+            speak("Which game do you need tips for?")
+            return
+        prompt = f"Give me 3 quick beginner tips for {game}. Keep each tip under 2 sentences."
+        speak(f"Here are some tips for {game}!")
+        response = ask_kira(prompt)
+        speak(response)
+        log(f"💡 {response}", "#ffff00")
+    except Exception as e:
+        speak("Sorry, couldn't fetch tips right now.")
+
+def get_walkthrough(game_name, situation):
+    try:
+        game = game_name or getattr(app, '_current_game', None)
+        if not game:
+            speak("Which game do you need help with?")
+            return
+        prompt = f"In {game}, help me with this situation: {situation}. Give a brief, clear solution."
+        speak("Let me help you get through this!")
+        response = ask_kira(prompt)
+        speak(response)
+        log(f"🗺️ {response}", "#ffff00")
+    except Exception as e:
+        speak("Sorry, couldn't fetch walkthrough right now.")
+
 def handle_command(query):
     if not query:
         return
@@ -669,6 +985,63 @@ def handle_command(query):
 
     elif "look at screen" in query or "analyze screen" in query:
         threading.Thread(target=describe_screen, daemon=True).start()
+    
+    elif "launch game" in query or "open game" in query or "play game" in query:
+        game = query.replace("launch game", "").replace("open game", "").replace("play game", "").strip()
+        if game:
+            launch_game(game)
+        else:
+            speak("Which game should I launch?")
+            log("KIRA ▶ Type the game name in the input box", "#00ffff")
+            app.after(100, lambda: setattr(app, '_launch_game_mode', True))
+
+    elif "list games" in query or "what games" in query:
+        list_games()
+
+    elif "add game" in query:
+        speak("Type: game name|full path to exe")
+        log("KIRA ▶ Format: minecraft|C:\\path\\to\\game.exe", "#00ffff")
+        app.after(100, lambda: setattr(app, '_add_game_mode', True))
+    
+    elif "game stats" in query or "my stats" in query:
+        game = query.replace("game stats", "").replace("my stats", "").strip()
+        show_stats(game if game else None)
+
+    elif "stop tracking" in query or "game over" in query or "done playing" in query:
+        stop_tracking()
+
+    elif "most played" in query:
+        stats = load_stats()
+        if stats:
+            most = max(stats, key=lambda x: stats[x]["total_minutes"])
+            hours = stats[most]["total_minutes"] // 60
+            speak(f"Your most played game is {most} with {hours} hours!")
+        else:
+            speak("No stats yet! Launch a game first.")
+    
+    elif "open overlay" in query or "gaming overlay" in query or "start overlay" in query:
+        app.after(100, create_overlay)
+
+    elif "close overlay" in query or "hide overlay" in query:
+        close_overlay()
+    
+    elif "game tip" in query or "tips for" in query:
+        game = query.replace("game tip", "").replace("tips for", "").strip()
+        get_game_tips(game if game else None)
+
+    elif "help me with" in query and "game" in query:
+        situation = query.replace("help me with", "").replace("game", "").strip()
+        get_walkthrough(None, situation)
+
+    elif "how do i" in query or "how to" in query:
+        game_assistant(query)
+
+    elif "game strategy" in query or "best strategy" in query:
+        game_assistant(query)
+
+    elif "game bug" in query or "game not working" in query:
+        game_assistant(query)
+
     else:
         speak("Let me think...")
         threading.Thread(target=lambda: speak(ask_kira(query)), daemon=True).start()
@@ -679,6 +1052,22 @@ def handle_command(query):
 def process_input(event=None):
     query = input_box.get().strip()
     if not query:
+        return
+    
+    if getattr(app, '_launch_game_mode', False):
+        app._launch_game_mode = False
+        input_box.delete(0, "end")
+        launch_game(query)
+        return
+
+    if getattr(app, '_add_game_mode', False):
+        app._add_game_mode = False
+        input_box.delete(0, "end")
+        parts = query.split("|")
+        if len(parts) == 2:
+            add_game(parts[0].strip(), parts[1].strip())
+        else:
+            speak("Please use format: name|path")
         return
     
     if getattr(app, '_listfiles_mode', False):
