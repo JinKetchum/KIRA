@@ -1529,6 +1529,35 @@ voice_btn.pack(pady=(5, 0))
 orb_canvas = ctk.CTkCanvas(app, width=100, height=100, bg="#2b2b2b", highlightthickness=0)
 orb_canvas.pack(pady=(0, 5))
 
+# Wake word toggle
+wake_status = {"active": True}
+
+def toggle_wake():
+    global wake_listening
+    wake_listening = not wake_listening
+    wake_status["active"] = wake_listening
+    if wake_listening:
+        wake_btn.configure(text="👂 WAKE WORD: ON", text_color="#00ff99")
+        log("👂 Wake word listener ON", "#00ff99")
+    else:
+        wake_btn.configure(text="👂 WAKE WORD: OFF", text_color="#ff0000")
+        log("👂 Wake word listener OFF", "#ff0000")
+
+wake_btn = ctk.CTkButton(
+    app,
+    text="👂 WAKE WORD: ON",
+    font=ctk.CTkFont(family="Courier", size=12, weight="bold"),
+    fg_color="#003333",
+    hover_color="#005555",
+    border_color="#00ffff",
+    border_width=1,
+    text_color="#00ff99",
+    width=200,
+    height=35,
+    command=toggle_wake
+)
+wake_btn.pack(pady=(5, 0))
+
 import math
 
 orb_state = {"mode": "idle", "step": 0, "angle": 0}
@@ -1622,4 +1651,46 @@ log("")
 
 threading.Thread(target=lambda: speak("KIRA online. All systems ready. How can I assist you?"), daemon=True).start()
 
+# ── Always-On Wake Word Listener ───────────────────────────
+wake_listening = True
+
+def wake_word_listener():
+    r = sr.Recognizer()
+    r.energy_threshold = 3000
+    r.dynamic_energy_threshold = True
+    
+    log("👂 Wake word listener active — say 'KIRA sync'!", "#005555")
+    
+    while wake_listening:
+        try:
+            with sr.Microphone() as source:
+                r.adjust_for_ambient_noise(source, duration=0.3)
+                audio = r.listen(source, timeout=3, phrase_time_limit=3)
+            
+            try:
+                text = r.recognize_google(audio, language="en-in").lower()
+                if "kira sync" in text or "kira sink" in text or "kira" in text:
+                    log("🔔 Wake word detected!", "#00ffff")
+                    app.after(0, lambda: speak("Yes? How can I help?"))
+                    
+                    # Now listen for command
+                    with sr.Microphone() as source:
+                        r.adjust_for_ambient_noise(source, duration=0.3)
+                        log("👂 Listening for command...", "#ffff00")
+                        audio2 = r.listen(source, timeout=5, phrase_time_limit=8)
+                    
+                    try:
+                        command = r.recognize_google(audio2, language="en-in").lower()
+                        log(f"YOU ▶ {command}", "#ffffff")
+                        app.after(0, lambda c=command: handle_command(c))
+                    except:
+                        app.after(0, lambda: speak("Sorry, I didn't catch that!"))
+            except:
+                pass
+        except:
+            pass
+
+# Start wake word listener in background
+wake_thread = threading.Thread(target=wake_word_listener, daemon=True)
+wake_thread.start()
 app.mainloop()
